@@ -106,7 +106,8 @@ export class MainDashboardComponent implements OnInit {
   private getRandomBooks(maxItems: number, sortBy?: string): Observable<Book[]> {
     return this.bookService.bookState$.pipe(
       map((state: BookState) => {
-        return this.shuffleBooks(state.books || [], maxItems);
+        const eligibleBooks = (state.books || []).filter(b => b.readStatus !== 'READ');
+        return this.shuffleBooks(eligibleBooks, maxItems);
       })
     );
   }
