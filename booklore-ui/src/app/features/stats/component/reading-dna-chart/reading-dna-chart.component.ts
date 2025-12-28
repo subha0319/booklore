@@ -1,21 +1,21 @@
-import {inject, Injectable, OnDestroy} from '@angular/core';
-import {BehaviorSubject, EMPTY, Observable, Subject, of} from 'rxjs';
-import {map, takeUntil, catchError, filter, first, switchMap} from 'rxjs/operators';
+import {Component, inject, OnDestroy, OnInit} from '@angular/core';
+import {CommonModule} from '@angular/common';
+import {BaseChartDirective} from 'ng2-charts';
+import {BehaviorSubject, EMPTY, Observable, Subject} from 'rxjs';
+import {catchError, filter, first, takeUntil} from 'rxjs/operators';
 import {ChartConfiguration, ChartData} from 'chart.js';
-
-import {LibraryFilterService} from './library-filter.service';
-import {BookService} from '../../book/service/book.service';
-import {Book, ReadStatus} from '../../book/model/book.model';
+import {BookService} from '../../../book/service/book.service';
+import {Book, ReadStatus} from '../../../book/model/book.model';
 
 interface ReadingDNAProfile {
-  adventurous: number; // Genre diversity and experimental reading
-  perfectionist: number; // Completion rate and quality focus
-  intellectual: number; // Non-fiction preference and complex books
-  emotional: number; // Fiction preference and rating engagement
-  patient: number; // Long book preference and series completion
-  social: number; // Popular books and mainstream choices
-  nostalgic: number; // Older books and classic literature
-  ambitious: number; // Reading volume and challenging material
+  adventurous: number;
+  perfectionist: number;
+  intellectual: number;
+  emotional: number;
+  patient: number;
+  social: number;
+  nostalgic: number;
+  ambitious: number;
 }
 
 interface PersonalityInsight {
@@ -27,19 +27,25 @@ interface PersonalityInsight {
 
 type ReadingDNAChartData = ChartData<'radar', number[], string>;
 
-@Injectable({
-  providedIn: 'root'
+@Component({
+  selector: 'app-reading-dna-chart',
+  standalone: true,
+  imports: [CommonModule, BaseChartDirective],
+  templateUrl: './reading-dna-chart.component.html',
+  styleUrls: ['./reading-dna-chart.component.scss']
 })
-export class ReadingDNAChartService implements OnDestroy {
+export class ReadingDNAChartComponent implements OnInit, OnDestroy {
   private readonly bookService = inject(BookService);
-  private readonly libraryFilterService = inject(LibraryFilterService);
   private readonly destroy$ = new Subject<void>();
 
-  public readonly readingDNAChartType = 'radar' as const;
+  public readonly chartType = 'radar' as const;
 
-  public readonly readingDNAChartOptions: ChartConfiguration<'radar'>['options'] = {
+  public readonly chartOptions: ChartConfiguration<'radar'>['options'] = {
     responsive: true,
     maintainAspectRatio: false,
+    layout: {
+      padding: {top: 15}
+    },
     scales: {
       r: {
         beginAtZero: true,
@@ -107,8 +113,7 @@ export class ReadingDNAChartService implements OnDestroy {
           },
           label: (context) => {
             const score = context.parsed.r;
-            const insights = this.getPersonalityInsights();
-            const insight = insights.find(i => i.trait === context.label);
+            const insight = this.personalityInsights.find(i => i.trait === context.label);
 
             return [
               `Score: ${score.toFixed(1)}/100`,
@@ -137,7 +142,7 @@ export class ReadingDNAChartService implements OnDestroy {
     }
   };
 
-  private readonly readingDNAChartDataSubject = new BehaviorSubject<ReadingDNAChartData>({
+  private readonly chartDataSubject = new BehaviorSubject<ReadingDNAChartData>({
     labels: [
       'Adventurous', 'Perfectionist', 'Intellectual', 'Emotional',
       'Patient', 'Social', 'Nostalgic', 'Ambitious'
@@ -145,23 +150,19 @@ export class ReadingDNAChartService implements OnDestroy {
     datasets: []
   });
 
-  public readonly readingDNAChartData$: Observable<ReadingDNAChartData> = this.readingDNAChartDataSubject.asObservable();
-  private lastCalculatedInsights: PersonalityInsight[] = [];
+  public readonly chartData$: Observable<ReadingDNAChartData> = this.chartDataSubject.asObservable();
+  public personalityInsights: PersonalityInsight[] = [];
 
-  constructor() {
+  ngOnInit(): void {
     this.bookService.bookState$
       .pipe(
         filter(state => state.loaded),
         first(),
-        switchMap(() =>
-          this.libraryFilterService.selectedLibrary$.pipe(
-            takeUntil(this.destroy$)
-          )
-        ),
         catchError((error) => {
           console.error('Error processing reading DNA data:', error);
           return EMPTY;
-        })
+        }),
+        takeUntil(this.destroy$)
       )
       .subscribe(() => {
         const profile = this.calculateReadingDNAData();
@@ -177,10 +178,11 @@ export class ReadingDNAChartService implements OnDestroy {
   private updateChartData(profile: ReadingDNAProfile | null): void {
     try {
       if (!profile) {
-        this.readingDNAChartDataSubject.next({
+        this.chartDataSubject.next({
           labels: [],
           datasets: []
         });
+        this.personalityInsights = [];
         return;
       }
 
@@ -195,13 +197,12 @@ export class ReadingDNAChartService implements OnDestroy {
         profile.ambitious
       ];
 
-      // Create gradient effect colors
       const gradientColors = [
         '#ff6b9d', '#45aaf2', '#96f7d2', '#feca57',
         '#ff9ff3', '#54a0ff', '#5f27cd', '#00d2d3'
       ];
 
-      this.readingDNAChartDataSubject.next({
+      this.chartDataSubject.next({
         labels: [
           'Adventurous', 'Perfectionist', 'Intellectual', 'Emotional',
           'Patient', 'Social', 'Nostalgic', 'Ambitious'
@@ -221,8 +222,7 @@ export class ReadingDNAChartService implements OnDestroy {
         }]
       });
 
-      // Store insights for tooltip
-      this.lastCalculatedInsights = this.convertToPersonalityInsights(profile);
+      this.personalityInsights = this.convertToPersonalityInsights(profile);
     } catch (error) {
       console.error('Error updating reading DNA chart data:', error);
     }
@@ -230,24 +230,16 @@ export class ReadingDNAChartService implements OnDestroy {
 
   private calculateReadingDNAData(): ReadingDNAProfile | null {
     const currentState = this.bookService.getCurrentBookState();
-    const selectedLibraryId = this.libraryFilterService.getCurrentSelectedLibrary();
 
     if (!this.isValidBookState(currentState)) {
       return null;
     }
 
-    const filteredBooks = this.filterBooksByLibrary(currentState.books!, String(selectedLibraryId));
-    return this.analyzeReadingDNA(filteredBooks);
+    return this.analyzeReadingDNA(currentState.books!);
   }
 
   private isValidBookState(state: any): boolean {
     return state?.loaded && state?.books && Array.isArray(state.books) && state.books.length > 0;
-  }
-
-  private filterBooksByLibrary(books: Book[], selectedLibraryId: string | null): Book[] {
-    return selectedLibraryId && selectedLibraryId !== 'null'
-      ? books.filter(book => String(book.libraryId) === selectedLibraryId)
-      : books;
   }
 
   private analyzeReadingDNA(books: Book[]): ReadingDNAProfile {
@@ -268,7 +260,6 @@ export class ReadingDNAChartService implements OnDestroy {
   }
 
   private calculateAdventurousScore(books: Book[]): number {
-    // Genre diversity + experimental choices + different formats
     const genres = new Set<string>();
     const languages = new Set<string>();
     const formats = new Set<string>();
@@ -279,9 +270,9 @@ export class ReadingDNAChartService implements OnDestroy {
       formats.add(book.bookType);
     });
 
-    const genreScore = Math.min(60, genres.size * 4); // Max 60 for 15+ genres
-    const languageScore = Math.min(20, languages.size * 10); // Max 20 for 2+ languages
-    const formatScore = Math.min(20, formats.size * 7); // Max 20 for 3+ formats
+    const genreScore = Math.min(60, genres.size * 4);
+    const languageScore = Math.min(20, languages.size * 10);
+    const formatScore = Math.min(20, formats.size * 7);
 
     return genreScore + languageScore + formatScore;
   }
@@ -290,7 +281,6 @@ export class ReadingDNAChartService implements OnDestroy {
     const completedBooks = books.filter(b => b.readStatus === ReadStatus.READ);
     const completionRate = completedBooks.length / books.length;
 
-    // High-quality book preference
     const qualityBooks = books.filter(book => {
       const metadata = book.metadata;
       if (!metadata) return false;
@@ -300,8 +290,8 @@ export class ReadingDNAChartService implements OnDestroy {
     });
 
     const qualityRate = qualityBooks.length / books.length;
-    const completionScore = completionRate * 60; // Max 60
-    const qualityScore = qualityRate * 40; // Max 40
+    const completionScore = completionRate * 60;
+    const qualityScore = qualityRate * 40;
 
     return Math.min(100, completionScore + qualityScore);
   }
@@ -329,7 +319,6 @@ export class ReadingDNAChartService implements OnDestroy {
       );
     });
 
-    // Long books indicate patience for complex material
     const longBooks = books.filter(book =>
       book.metadata?.pageCount && book.metadata.pageCount > 400
     );
@@ -365,7 +354,6 @@ export class ReadingDNAChartService implements OnDestroy {
       );
     });
 
-    // Personal rating engagement shows emotional connection
     const personallyRatedBooks = books.filter(book => book.personalRating);
 
     const emotionalRate = emotionalBooks.length / books.length;
@@ -375,7 +363,6 @@ export class ReadingDNAChartService implements OnDestroy {
   }
 
   private calculatePatienceScore(books: Book[]): number {
-    // Long books + series completion + slow reading pace
     const longBooks = books.filter(book =>
       book.metadata?.pageCount && book.metadata.pageCount > 500
     );
@@ -384,7 +371,6 @@ export class ReadingDNAChartService implements OnDestroy {
       book.metadata?.seriesName && book.metadata?.seriesNumber
     );
 
-    // Books with high progress indicate patience to work through them
     const progressBooks = books.filter(book => {
       const progress = Math.max(
         book.epubProgress?.percentage || 0,
@@ -404,7 +390,6 @@ export class ReadingDNAChartService implements OnDestroy {
   }
 
   private calculateSocialScore(books: Book[]): number {
-    // Popular books (high ratings, many reviews) + mainstream genres
     const popularBooks = books.filter(book => {
       const metadata = book.metadata;
       if (!metadata) return false;
@@ -446,7 +431,7 @@ export class ReadingDNAChartService implements OnDestroy {
 
   private calculateNostalgicScore(books: Book[]): number {
     const currentYear = new Date().getFullYear();
-    const classicThreshold = currentYear - 30; // Books older than 30 years
+    const classicThreshold = currentYear - 30;
 
     const oldBooks = books.filter(book => {
       if (!book.metadata?.publishedDate) return false;
@@ -480,9 +465,8 @@ export class ReadingDNAChartService implements OnDestroy {
   }
 
   private calculateAmbitiousScore(books: Book[]): number {
-    // Volume + challenging material + completion of difficult books
     const totalBooks = books.length;
-    const volumeScore = Math.min(40, totalBooks * 2); // Max 40 for 20+ books
+    const volumeScore = Math.min(40, totalBooks * 2);
 
     const challengingBooks = books.filter(book =>
       book.metadata?.pageCount && book.metadata.pageCount > 600
@@ -496,8 +480,8 @@ export class ReadingDNAChartService implements OnDestroy {
     const completionRate = challengingBooks.length > 0 ?
       completedChallenging.length / challengingBooks.length : 0;
 
-    const challengingScore = challengingRate * 35; // Max 35
-    const completionBonus = completionRate * 25; // Max 25
+    const challengingScore = challengingRate * 35;
+    const completionBonus = completionRate * 25;
 
     return Math.min(100, volumeScore + challengingScore + completionBonus);
   }
@@ -566,9 +550,5 @@ export class ReadingDNAChartService implements OnDestroy {
         color: '#00d2d3'
       }
     ];
-  }
-
-  public getPersonalityInsights(): PersonalityInsight[] {
-    return this.lastCalculatedInsights;
   }
 }
